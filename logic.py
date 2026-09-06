@@ -21,6 +21,7 @@ class DB_Manager:
                             description TEXT,
                             url TEXT,
                             status_id INTEGER,
+                            photo TEXT,
                             FOREIGN KEY(status_id) REFERENCES status(status_id)
                         )''')
             conn.execute('''CREATE TABLE IF NOT EXISTS skills (
@@ -81,51 +82,54 @@ class DB_Manager:
 
     def get_status_id(self, status_name):
         sql = 'SELECT status_id FROM status WHERE status_name = ?'
-        return self.__select_data(sql, (status_name,))
+        result = self.__select_data(sql, (status_name,))
+        return result[0][0] if result else None
 
-    def get_projects(self):
-        sql = """SELECT project_name, status_name, description, url, GROUP_CONCAT(skill_name)
+    def get_projects(self, user_id):
+        sql = """SELECT project_id, user_id, project_name, description, url, status_id, photo
+                 FROM projects WHERE user_id = ?"""
+        return self.__select_data(sql, (user_id,))
+
+    def get_project_info(self, user_id, project_name):
+        sql = """SELECT project_name, description, url, status_name, photo
                  FROM projects
                  LEFT JOIN status USING(status_id)
-                 LEFT JOIN project_skills USING(project_id)
-                 LEFT JOIN skills USING(skill_id)
-                 GROUP BY project_id"""
-        return self.__select_data(sql)
+                 WHERE user_id = ? AND project_name = ?"""
+        return self.__select_data(sql, (user_id, project_name))
 
-    def insert_project(self, user_id, project_name, description, url, status_id):
-        sql = 'INSERT INTO projects (user_id, project_name, description, url, status_id) values (?, ?, ?, ?, ?)'
-        data = [(user_id, project_name, description, url, status_id)]
-        self.__executemany(sql, data)
-
-    def get_project_info(self, project_id):
-        sql = """SELECT project_name, description, url, status_name
-                 FROM projects
-                 LEFT JOIN status USING(status_id)
-                 WHERE project_id = ?"""
-        return self.__select_data(sql, (project_id,))
-
-    def get_project_skills(self, project_id):
+    def get_project_skills(self, project_name):
         sql = """SELECT skill_name
                  FROM skills
                  LEFT JOIN project_skills USING(skill_id)
-                 WHERE project_id = ?"""
-        return self.__select_data(sql, (project_id,))
+                 LEFT JOIN projects USING(project_id)
+                 WHERE project_name = ?"""
+        return self.__select_data(sql, (project_name,))
+
+    def insert_project(self, data):
+        sql = 'INSERT INTO projects (user_id, project_name, url, status_id, description, photo) values (?, ?, ?, ?, ?, ?)'
+        self.__executemany(sql, data)
 
     def insert_project_skills(self, project_id, skills):
         sql = 'INSERT INTO project_skills (project_id, skill_id) values (?, ?)'
         data = [(project_id, skill_id) for skill_id in skills]
         self.__executemany(sql, data)
 
-    def update_projects(self, project_id, new_status_id):
-        sql = 'UPDATE projects SET status_id = ? WHERE project_id = ?'
-        data = [(new_status_id, project_id)]
-        self.__executemany(sql, data)
+    def update_projects(self, attribute, data):
+        sql = f"UPDATE projects SET {attribute} = ? WHERE project_name = ? AND user_id = ?"
+        self.__executemany(sql, [data])
 
     def get_skills(self):
-        sql = 'SELECT skill_name FROM skills'
+        sql = 'SELECT skill_id, skill_name FROM skills'
         return self.__select_data(sql)
 
-    def insert_skill(self, new_skill):
+    def insert_skill(self, user_id, project_name, skill_name):
+        sql = """INSERT INTO project_skills (project_id, skill_id)
+                 SELECT p.project_id, s.skill_id
+                 FROM projects p, skills s
+                 WHERE p.user_id = ? AND p.project_name = ? AND s.skill_name = ?"""
+        self.__executemany(sql, [(user_id, project_name, skill_name)])
+
+    def add_skill(self, new_skill):
         sql = 'INSERT INTO skills (skill_name) values(?)'
         data = [(new_skill,)]
         self.__executemany(sql, data)
@@ -140,9 +144,22 @@ class DB_Manager:
         data = [(new_skill, skill_id)]
         self.__executemany(sql, data)
 
-    def get_project_id(self, project_name):
-        sql = 'SELECT project_id FROM projects WHERE project_name = ?'
-        return self.__select_data(sql, (project_name,))
+    def get_skill_id(self, skill_name):
+        sql = 'SELECT skill_id FROM skills WHERE skill_name = ?'
+        result = self.__select_data(sql, (skill_name,))
+        return result[0][0] if result else None
+
+    def get_project_id(self, project_name, user_id):
+        sql = 'SELECT project_id FROM projects WHERE project_name = ? AND user_id = ?'
+        result = self.__select_data(sql, (project_name, user_id))
+        return result[0][0] if result else None
+
+    def delete_project(self, user_id, project_id):
+        sql = 'DELETE FROM project_skills WHERE project_id = ?'
+        self.__executemany(sql, [(project_id,)])
+        sql = 'DELETE FROM projects WHERE user_id = ? AND project_id = ?'
+        data = [(user_id, project_id)]
+        self.__executemany(sql, data)
 
     def __repr__(self):
         return 'Класс для управления БД'
@@ -152,16 +169,3 @@ if __name__ == '__main__':
     manager = DB_Manager(DATABASE)
     manager.create_tables()
     manager.default_insert()
-    print(manager.get_statuses())
-    print(manager.get_skills())
-    status_id = manager.get_status_id('В процессе разработки')[0][0]
-    manager.insert_project(0, 'Сервер для майна и хостинга сайта',
-                           'Создание домашнего сервера на Ubuntu, на котором хостится Minecraft и сайты.',
-                           '', status_id)
-    project_id = manager.get_project_id('Сервер для майна и хостинга сайта')[0][0]
-    manager.insert_project_skills(project_id, [1, 2, 3])
-    print(manager.get_projects())
-    print(manager.get_project_info(project_id))
-    print(manager.get_project_skills(project_id))
-    manager.update_projects(project_id, 4)
-    print(manager.get_project_info(project_id))
